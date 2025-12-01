@@ -57,6 +57,10 @@
 # solving the previous "release version not supported" error, assuming your
 # pom.xml is set to <java.version>21</java.version>.
 # ----------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------
+# STAGE 1: BUILDER
+# Purpose: Compiles the source code and creates the executable JAR using JDK 21.
+# ----------------------------------------------------------------------------------
 FROM eclipse-temurin:21-jdk-alpine AS builder
 
 # Set working directory for the build
@@ -67,14 +71,18 @@ COPY mvnw .
 COPY .mvn .mvn
 COPY pom.xml .
 
+# FIX: Grant executable permission to the Maven Wrapper script
+RUN chmod +x mvnw
+
 # Fetch all dependencies. If pom.xml doesn't change, this step is cached.
+# The -B flag runs Maven in non-interactive (batch) mode.
 RUN ./mvnw dependency:go-offline -B
 
 # Copy the source code
 COPY src src
 
-# Build the application
-# Use the -DskipTests flag to speed up the build in the CI pipeline
+# Build the application (package the JAR)
+# -DskipTests flag is used to speed up the build process in the container
 RUN ./mvnw package -DskipTests
 
 # ----------------------------------------------------------------------------------
@@ -83,12 +91,12 @@ RUN ./mvnw package -DskipTests
 # ----------------------------------------------------------------------------------
 FROM eclipse-temurin:21-jre-alpine AS final
 
-# CRITICAL SECURITY FIX: Update and upgrade Alpine packages to patch libpng (CVE-2023-52119) and others.
+# CRITICAL SECURITY FIX: Update and upgrade Alpine packages to patch libpng and others.
 RUN apk update && \
     apk upgrade --available && \
     rm -rf /var/cache/apk/*
 
-# Metadata
+# Metadata (Good practice for tracking)
 LABEL maintainer="Kiran Roy"
 LABEL app="bankapp"
 
@@ -102,13 +110,12 @@ ENV GIT_REF=${GIT_REF}
 ENV APP_VERSION=${APP_VERSION}
 
 # Copy the built JAR file from the builder stage
-# Assumes the JAR file is named bankapp-0.0.1-SNAPSHOT.jar (Maven default)
-# You might need to adjust the version number based on your pom.xml
+# Uses the standard Maven default JAR name format
 COPY --from=builder /build/target/bankapp-0.0.1-SNAPSHOT.jar ./bankapp.jar
 
 # Expose application port
 EXPOSE 8080
 
 # Start the application
-# Define memory limits for stability in a containerized environment
+# Define minimum and maximum JVM memory limits for stability in a containerized environment
 ENTRYPOINT ["java", "-Xms128m", "-Xmx256m", "-jar", "bankapp.jar"]
