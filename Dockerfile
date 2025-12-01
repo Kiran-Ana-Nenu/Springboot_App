@@ -50,9 +50,40 @@
 # STAGE 2: DEPLOY STAGE (The final, minimal runtime image)
 # ----------------------------------------------------------------------------------
 # CHANGE: Updated to use Java 21 (LTS) to align with modern best practices.
+# ----------------------------------------------------------------------------------
+# STAGE 1: BUILDER
+# Purpose: Compiles the source code and creates the executable JAR using JDK 21.
+# This stage ensures the correct Java version (21) is used for compilation, 
+# solving the previous "release version not supported" error, assuming your
+# pom.xml is set to <java.version>21</java.version>.
+# ----------------------------------------------------------------------------------
+FROM eclipse-temurin:21-jdk-alpine AS builder
+
+# Set working directory for the build
+WORKDIR /build
+
+# Copy Maven wrapper files and pom.xml first to leverage Docker cache
+COPY mvnw .
+COPY .mvn .mvn
+COPY pom.xml .
+
+# Fetch all dependencies. If pom.xml doesn't change, this step is cached.
+RUN ./mvnw dependency:go-offline -B
+
+# Copy the source code
+COPY src src
+
+# Build the application
+# Use the -DskipTests flag to speed up the build in the CI pipeline
+RUN ./mvnw package -DskipTests
+
+# ----------------------------------------------------------------------------------
+# STAGE 2: RUNTIME
+# Purpose: Creates the final, minimal image using a JRE for security and size.
+# ----------------------------------------------------------------------------------
 FROM eclipse-temurin:21-jre-alpine AS final
 
-# CRITICAL SECURITY FIX: Update and upgrade Alpine packages to patch libpng and others.
+# CRITICAL SECURITY FIX: Update and upgrade Alpine packages to patch libpng (CVE-2023-52119) and others.
 RUN apk update && \
     apk upgrade --available && \
     rm -rf /var/cache/apk/*
@@ -61,26 +92,23 @@ RUN apk update && \
 LABEL maintainer="Kiran Roy"
 LABEL app="bankapp"
 
-# Set working directory
+# Set working directory for the application
 WORKDIR /app
 
-# Arguments and Environment Variables
-ARG GIT_REF
-ARG APP_VERSION
+# Arguments and Environment Variables (passed from the Docker build command)
+ARG GIT_REF="unknown"
+ARG APP_VERSION="snapshot"
 ENV GIT_REF=${GIT_REF}
 ENV APP_VERSION=${APP_VERSION}
 
-# Copy the pre-built jar from Jenkins workspace
-# The path must match your CI/CD output structure. Assuming 'target/bankapp.jar'.
-COPY target/bankapp.jar ./bankapp.jar
+# Copy the built JAR file from the builder stage
+# Assumes the JAR file is named bankapp-0.0.1-SNAPSHOT.jar (Maven default)
+# You might need to adjust the version number based on your pom.xml
+COPY --from=builder /build/target/bankapp-0.0.1-SNAPSHOT.jar ./bankapp.jar
 
 # Expose application port
 EXPOSE 8080
 
 # Start the application
-# Use the minimum memory settings for a typical Spring Boot app in a container
+# Define memory limits for stability in a containerized environment
 ENTRYPOINT ["java", "-Xms128m", "-Xmx256m", "-jar", "bankapp.jar"]
-
-# ----------------------------------------------------------------------------------
-# Action Required: Update your Jenkins script to build for Java 21 (or set pom.xml to 17).
-# ----------------------------------------------------------------------------------
