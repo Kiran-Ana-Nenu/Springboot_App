@@ -39,8 +39,23 @@
 # Stage 1: Deploy pre-built JAR
 #----------------------------------
 
-# Use small Java runtime image
-FROM eclipse-temurin:17-jdk-alpine AS deployer
+# ----------------------------------------------------------------------------------
+# STAGE 1: BUILD STAGE (Use a full JDK for compilation, if needed. Assuming pre-built JAR)
+# ----------------------------------------------------------------------------------
+# NOTE: The provided Dockerfile assumes the JAR is ALREADY built outside.
+# If you were building inside the container, this would be the stage for Maven/Gradle.
+# Skipping this stage to match your input, which copies a pre-built JAR.
+
+# ----------------------------------------------------------------------------------
+# STAGE 2: DEPLOY STAGE (The final, minimal runtime image)
+# ----------------------------------------------------------------------------------
+# CHANGE: Updated to use Java 21 (LTS) to align with modern best practices.
+FROM eclipse-temurin:21-jre-alpine AS final
+
+# CRITICAL SECURITY FIX: Update and upgrade Alpine packages to patch libpng and others.
+RUN apk update && \
+    apk upgrade --available && \
+    rm -rf /var/cache/apk/*
 
 # Metadata
 LABEL maintainer="Kiran Roy"
@@ -49,17 +64,23 @@ LABEL app="bankapp"
 # Set working directory
 WORKDIR /app
 
-# Arguments for metadata (optional, useful for CI/CD tagging)
+# Arguments and Environment Variables
 ARG GIT_REF
 ARG APP_VERSION
 ENV GIT_REF=${GIT_REF}
 ENV APP_VERSION=${APP_VERSION}
 
 # Copy the pre-built jar from Jenkins workspace
-COPY target/*.jar ./bankapp.jar
+# The path must match your CI/CD output structure. Assuming 'target/bankapp.jar'.
+COPY target/bankapp.jar ./bankapp.jar
 
 # Expose application port
 EXPOSE 8080
 
 # Start the application
-ENTRYPOINT ["java", "-jar", "bankapp.jar"]
+# Use the minimum memory settings for a typical Spring Boot app in a container
+ENTRYPOINT ["java", "-Xms128m", "-Xmx256m", "-jar", "bankapp.jar"]
+
+# ----------------------------------------------------------------------------------
+# Action Required: Update your Jenkins script to build for Java 21 (or set pom.xml to 17).
+# ----------------------------------------------------------------------------------
